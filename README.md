@@ -2,6 +2,8 @@
 
 一个基于 Cloudflare Workers + D1 的多服务器监控探针系统，支持实时监控、历史数据查看、延迟追踪、地图展示等功能。
 
+本项目基于[CF-Server-Monitor-Pro](https://github.com/a63414262/CF-Server-Monitor-Pro)深度二次开发
+
 ## ✨ 功能特点
 
 - 📊 **实时监控**：CPU、内存、磁盘、网络、进程数、连接数
