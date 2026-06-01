@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// 生成带有波动的指标数据
 function generateMetrics(baseTimestamp, serverIdx, hourOffset) {
   const baseHour = (new Date(baseTimestamp).getHours() + hourOffset / 60) % 24;
   
@@ -49,7 +48,13 @@ function generateMetrics(baseTimestamp, serverIdx, hourOffset) {
     ping_cm: Math.round(Math.max(10, baseline.ping * 1.1 + pingNoise)).toString(),
     ping_bd: Math.round(Math.max(10, baseline.ping * 1.5 + pingNoise)).toString(),
     ip_v4: '1',
-    ip_v6: serverIdx === 0 ? '1' : '0'
+    ip_v6: serverIdx === 0 ? '1' : '0',
+    cpu_cores: serverIdx === 0 ? '4' : '2',
+    cpu_info: serverIdx === 0 ? 'Intel Xeon E5-2680 v4' : 'AMD EPYC 7742',
+    arch: 'x86_64',
+    os: serverIdx === 0 ? 'Ubuntu 22.04 LTS' : 'Debian 12',
+    country: serverIdx === 0 ? 'US' : 'JP',
+    boot_time: (Date.now() - (serverIdx === 0 ? 86400000 * 600 : 86400000 * 15)).toString()
   };
 }
 
@@ -60,40 +65,24 @@ const servers = [
   {
     id: '550e8400-e29b-41d4-a716-446655440001',
     name: 'US-East-Fast',
-    country: 'US',
-    os: 'Ubuntu 22.04 LTS',
-    cpu_info: 'Intel Xeon E5-2680 v4',
-    cpu_cores: '4',
-    arch: 'x86_64',
-    ram_total: '32768',
-    disk_total: '200',
-    ip_v4: '1',
-    ip_v6: '1',
     server_group: 'Production',
     price: '$15/mo',
+    expire_date: '2026-12-31',
     bandwidth: '1Gbps',
     traffic_limit: '2TB',
-    report_interval: 60,
-    boot_time: now - 86400000 * 600
+    is_hidden: '0',
+    sort_order: 0
   },
   {
     id: '550e8400-e29b-41d4-a716-446655440002',
     name: 'JP-Tokyo-Stable',
-    country: 'JP',
-    os: 'Debian 12',
-    cpu_info: 'AMD EPYC 7742',
-    cpu_cores: '2',
-    arch: 'x86_64',
-    ram_total: '16384',
-    disk_total: '100',
-    ip_v4: '1',
-    ip_v6: '0',
     server_group: 'Production',
     price: '$10/mo',
+    expire_date: '2026-06-30',
     bandwidth: '500Mbps',
     traffic_limit: '1TB',
-    report_interval: 120,
-    boot_time: now - 86400000 * 15
+    is_hidden: '0',
+    sort_order: 1
   }
 ];
 
@@ -139,18 +128,17 @@ const serverLatestMetrics = {};
 
 for (const server of servers) {
   sql += `INSERT INTO servers (
-    id, name, country, os, cpu_info, cpu_cores, arch, ram_total, disk_total, 
-    ip_v4, ip_v6, server_group, price, bandwidth, traffic_limit, boot_time
+    id, name, server_group, price, expire_date, bandwidth, traffic_limit, is_hidden, sort_order
   ) VALUES (
-    '${server.id}', '${server.name}', '${server.country}', 
-    '${server.os}', '${server.cpu_info}', '${server.cpu_cores}', '${server.arch}', 
-    '${server.ram_total}', '${server.disk_total}', '${server.ip_v4}', 
-    '${server.ip_v6}', '${server.server_group}', '${server.price}', 
-    '${server.bandwidth}', '${server.traffic_limit}', ${server.boot_time}
+    '${server.id}', '${server.name}', '${server.server_group}', '${server.price}', 
+    '${server.expire_date}', '${server.bandwidth}', '${server.traffic_limit}', 
+    '${server.is_hidden}', ${server.sort_order}
   );\n`;
 }
 
 sql += `\n-- 生成历史指标数据\n`;
+
+const reportInterval = 60;
 
 for (let s = 0; s < servers.length; s++) {
   const server = servers[s];
@@ -158,7 +146,7 @@ for (let s = 0; s < servers.length; s++) {
   let latestTs = 0;
   let latestMetrics = null;
   
-  for (let ts = startTime; ts <= now; ts += server.report_interval * 1000) {
+  for (let ts = startTime; ts <= now; ts += reportInterval * 1000) {
     const hourOffset = (now - ts) / (60 * 60 * 1000);
     const metrics = generateMetrics(now, s, hourOffset);
     
@@ -168,7 +156,8 @@ for (let s = 0; s < servers.length; s++) {
       processes, tcp_conn, udp_conn,
       ping_ct, ping_cu, ping_cm, ping_bd,
       ram_total, ram_used, swap_total, swap_used,
-      disk_total, disk_used
+      disk_total, disk_used,
+      cpu_cores, cpu_info, arch, os, country, ip_v4, ip_v6, boot_time
     ) VALUES (
       '${server.id}', ${ts}, 
       ${parseFloat(metrics.cpu)}, ${parseFloat(metrics.ram)}, ${parseFloat(metrics.disk)}, '${metrics.load}',
@@ -178,7 +167,8 @@ for (let s = 0; s < servers.length; s++) {
       ${parseInt(metrics.ping_ct)}, ${parseInt(metrics.ping_cu)}, ${parseInt(metrics.ping_cm)}, ${parseInt(metrics.ping_bd)},
       ${parseFloat(metrics.ram_total)}, ${parseFloat(metrics.ram_used)},
       ${parseFloat(metrics.swap_total)}, ${parseFloat(metrics.swap_used)},
-      ${parseFloat(metrics.disk_total)}, ${parseFloat(metrics.disk_used)}
+      ${parseFloat(metrics.disk_total)}, ${parseFloat(metrics.disk_used)},
+      ${parseInt(metrics.cpu_cores)}, '${metrics.cpu_info}', '${metrics.arch}', '${metrics.os}', '${metrics.country}', '${metrics.ip_v4}', '${metrics.ip_v6}', '${metrics.boot_time}'
     );\n`;
     
     if (ts > latestTs) {
@@ -188,35 +178,6 @@ for (let s = 0; s < servers.length; s++) {
   }
   
   serverLatestMetrics[server.id] = { ts: latestTs, metrics: latestMetrics };
-}
-
-sql += `\n-- 更新服务器最新状态\n`;
-
-for (const [serverId, data] of Object.entries(serverLatestMetrics)) {
-  const { ts, metrics } = data;
-  
-  sql += `UPDATE servers 
-    SET cpu = '${metrics.cpu}', 
-        ram = '${metrics.ram}', 
-        disk = '${metrics.disk}', 
-        load_avg = '${metrics.load}', 
-        net_in_speed = '${metrics.net_in_speed}', 
-        net_out_speed = '${metrics.net_out_speed}',
-        net_rx = '${metrics.net_rx}', 
-        net_tx = '${metrics.net_tx}',
-        processes = '${metrics.processes}', 
-        tcp_conn = '${metrics.tcp_conn}', 
-        udp_conn = '${metrics.udp_conn}',
-        ping_ct = '${metrics.ping_ct}', 
-        ping_cu = '${metrics.ping_cu}', 
-        ping_cm = '${metrics.ping_cm}', 
-        ping_bd = '${metrics.ping_bd}',
-        ram_used = '${metrics.ram_used}', 
-        swap_used = '${metrics.swap_used}', 
-        disk_used = '${metrics.disk_used}',
-        ip_v4 = '${metrics.ip_v4}',
-        ip_v6 = '${metrics.ip_v6}'
-    WHERE id = '${serverId}';\n`;
 }
 
 const outputPath = path.join(__dirname, 'mock-data.sql');

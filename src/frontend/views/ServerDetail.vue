@@ -434,8 +434,6 @@ const initCharts = () => {
           displayFormats: { minute: 'HH:mm', hour: 'MM-dd HH:mm' },
           tooltipFormat: 'yyyy-MM-dd HH:mm:ss'
         },
-        min: 'dataMin',
-        max: 'dataMax',
         ticks: {
           maxTicksLimit: 8,
           color: '#5c6d82',
@@ -562,119 +560,115 @@ const initCharts = () => {
 }
 
 const updateChartDataset = (chart, datasetIndex, dataPoints, xField = 'timestamp', yField) => {
-  if (!chart || !dataPoints || dataPoints.length === 0) return
+  if (!chart) return
 
   const dataset = chart.data.datasets[datasetIndex]
   if (!dataset) return
   
-  const startTime = Date.now() - currentHours.value * 60 * 60 * 1000
+  const endTime = Date.now()
+  const startTime = endTime - currentHours.value * 60 * 60 * 1000
 
-  let sampledData = dataPoints
-  if (dataPoints.length > 500) {
-    const step = Math.ceil(dataPoints.length / 500)
-    sampledData = dataPoints.filter((_, i) => i % step === 0)
-  }
-
-  const processedData = sampledData.map(d => ({
-    x: new Date(d[xField]).getTime(),
-    y: parseFloat(d[yField]) || 0
-  }))
-
-  processedData.sort((a, b) => a.x - b.x)
-
-  const completeData = []
-  if (processedData.length > 0 && processedData[0].x > startTime) {
-    completeData.push({ x: startTime, y: null })
-  }
-  completeData.push(...processedData)
-  if (processedData.length > 0) {
-    const lastTimestamp = processedData[processedData.length - 1].x
-    const now = Date.now()
-    if (lastTimestamp < now) {
-      completeData.push({ x: now, y: null })
+  let processedData = []
+  if (dataPoints && dataPoints.length > 0) {
+    let sampledData = dataPoints
+    if (dataPoints.length > 500) {
+      const step = Math.ceil(dataPoints.length / 500)
+      sampledData = dataPoints.filter((_, i) => i % step === 0)
     }
+
+    processedData = sampledData.map(d => ({
+      x: new Date(d[xField]).getTime(),
+      y: parseFloat(d[yField]) || 0
+    }))
+
+    processedData.sort((a, b) => a.x - b.x)
   }
 
-  dataset.data = completeData
+  // 设置 x 轴范围
+  if (chart.options && chart.options.scales && chart.options.scales.x) {
+    chart.options.scales.x.min = startTime
+    chart.options.scales.x.max = endTime
+  }
+
+  dataset.data = processedData
   chart.update('none')
 }
 
 const updateChartDatasetWithSwap = (chart, datasetIndex, dataPoints) => {
-  if (!chart || !dataPoints || dataPoints.length === 0) return
+  if (!chart) return
 
   const dataset = chart.data.datasets[datasetIndex]
   if (!dataset) return
   
-  const startTime = Date.now() - currentHours.value * 60 * 60 * 1000
+  const endTime = Date.now()
+  const startTime = endTime - currentHours.value * 60 * 60 * 1000
 
-  let sampledData = dataPoints
-  if (dataPoints.length > 500) {
-    const step = Math.ceil(dataPoints.length / 500)
-    sampledData = dataPoints.filter((_, i) => i % step === 0)
+  let processedData = []
+  if (dataPoints && dataPoints.length > 0) {
+    let sampledData = dataPoints
+    if (dataPoints.length > 500) {
+      const step = Math.ceil(dataPoints.length / 500)
+      sampledData = dataPoints.filter((_, i) => i % step === 0)
+    }
+
+    processedData = sampledData.map(d => {
+      const swapTotal = parseFloat(d.swap_total) || 0
+      const swapUsed = parseFloat(d.swap_used) || 0
+      const percent = swapTotal === 0 ? 0 : (swapUsed / swapTotal) * 100
+      return { x: new Date(d.timestamp).getTime(), y: percent }
+    })
+
+    processedData.sort((a, b) => a.x - b.x)
   }
 
-  const processedData = sampledData.map(d => {
-    const swapTotal = parseFloat(d.swap_total) || 0
-    const swapUsed = parseFloat(d.swap_used) || 0
-    const percent = swapTotal === 0 ? 0 : (swapUsed / swapTotal) * 100
-    return { x: new Date(d.timestamp).getTime(), y: percent }
-  })
-
-  processedData.sort((a, b) => a.x - b.x)
-
-  const completeData = []
-  if (processedData.length > 0 && processedData[0].x > startTime) {
-    completeData.push({ x: startTime, y: null })
+  // 设置 x 轴范围
+  if (chart.options && chart.options.scales && chart.options.scales.x) {
+    chart.options.scales.x.min = startTime
+    chart.options.scales.x.max = endTime
   }
-  completeData.push(...processedData)
 
-  dataset.data = completeData.filter(d => d.x >= startTime)
+  dataset.data = processedData
+  chart.update('none')
 }
 
 const updateLoadChart = (chart, dataPoints) => {
-  if (!chart || !dataPoints || dataPoints.length === 0) return
+  if (!chart) return
 
-  const startTime = Date.now() - currentHours.value * 60 * 60 * 1000
+  const endTime = Date.now()
+  const startTime = endTime - currentHours.value * 60 * 60 * 1000
 
-  let sampledData = dataPoints
-  if (dataPoints.length > 500) {
-    const step = Math.ceil(dataPoints.length / 500)
-    sampledData = dataPoints.filter((_, i) => i % step === 0)
-  }
-
-  const processedData = sampledData.map(d => {
-    // 优先使用 load_avg，如果没有则尝试 load_avg_avg（聚合数据）
-    const loadVal = d.load_avg || d.load_avg_avg || '0 0 0'
-    const loads = parseLoadAvg(loadVal)
-    return { 
-      x: new Date(d.timestamp).getTime(), 
-      load1: loads[0],
-      load5: loads[1],
-      load15: loads[2]
+  let processedData = []
+  if (dataPoints && dataPoints.length > 0) {
+    let sampledData = dataPoints
+    if (dataPoints.length > 500) {
+      const step = Math.ceil(dataPoints.length / 500)
+      sampledData = dataPoints.filter((_, i) => i % step === 0)
     }
-  })
 
-  processedData.sort((a, b) => a.x - b.x)
+    processedData = sampledData.map(d => {
+      // 优先使用 load_avg，如果没有则尝试 load_avg_avg（聚合数据）
+      const loadVal = d.load_avg || d.load_avg_avg || '0 0 0'
+      const loads = parseLoadAvg(loadVal)
+      return { 
+        x: new Date(d.timestamp).getTime(), 
+        load1: loads[0],
+        load5: loads[1],
+        load15: loads[2]
+      }
+    })
 
-  const completeData1 = []
-  const completeData5 = []
-  const completeData15 = []
-  
-  if (processedData.length > 0 && processedData[0].x > startTime) {
-    completeData1.push({ x: startTime, y: null })
-    completeData5.push({ x: startTime, y: null })
-    completeData15.push({ x: startTime, y: null })
+    processedData.sort((a, b) => a.x - b.x)
   }
-  
-  processedData.forEach(d => {
-    completeData1.push({ x: d.x, y: d.load1 })
-    completeData5.push({ x: d.x, y: d.load5 })
-    completeData15.push({ x: d.x, y: d.load15 })
-  })
 
-  chart.data.datasets[0].data = completeData1.filter(d => d.x >= startTime)
-  chart.data.datasets[1].data = completeData5.filter(d => d.x >= startTime)
-  chart.data.datasets[2].data = completeData15.filter(d => d.x >= startTime)
+  // 设置 x 轴范围
+  if (chart.options && chart.options.scales && chart.options.scales.x) {
+    chart.options.scales.x.min = startTime
+    chart.options.scales.x.max = endTime
+  }
+
+  chart.data.datasets[0].data = processedData.map(d => ({ x: d.x, y: d.load1 }))
+  chart.data.datasets[1].data = processedData.map(d => ({ x: d.x, y: d.load5 }))
+  chart.data.datasets[2].data = processedData.map(d => ({ x: d.x, y: d.load15 }))
   chart.update('none')
 }
 
@@ -791,11 +785,15 @@ const loadAllHistory = async (hours) => {
 const updateAllChartTimeUnits = (hours) => {
   const unit = hours <= 3 ? 'minute' : 'hour'
   const maxTicks = hours <= 3 ? 8 : 12
+  const endTime = Date.now()
+  const startTime = endTime - hours * 60 * 60 * 1000
 
   Object.values(charts).forEach(chart => {
     if (chart && chart.options && chart.options.scales && chart.options.scales.x && chart.options.scales.x.time) {
       chart.options.scales.x.time.unit = unit
       chart.options.scales.x.ticks.maxTicksLimit = maxTicks
+      chart.options.scales.x.min = startTime
+      chart.options.scales.x.max = endTime
     }
   })
 
