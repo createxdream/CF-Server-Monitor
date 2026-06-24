@@ -7,7 +7,7 @@ import {
   getCacheDuration
 } from '../utils/cache.js';
 import { clearSiteSettingsCache , debug } from '../utils/settings.js';
-import { updateDatabase } from './updateDatabase.js';
+import { addHistoryColumns } from './updateDatabase.js';
 
 let dbInitialized = false;
 
@@ -397,10 +397,10 @@ export async function saveMetricsHistory(db, serverId, metrics, regionCode = '')
       parseFloat(metrics.net_tx_monthly) || 0
     ).run();
   } catch (e) {
-    // 检测是否是 "has no column" 错误，如果是则自动升级数据库
+    // 检测是否是 "has no column" 错误，如果是则添加缺失字段
     if (e.message && /has no column/i.test(e.message)) {
-      console.warn('检测到数据库字段缺失，开始自动升级...');
-      await updateDatabase(db);
+      console.warn('检测到数据库字段缺失，尝试添加缺失字段...');
+      await addHistoryColumns(db);
       return;
     }
     console.error('保存历史数据失败:', e);

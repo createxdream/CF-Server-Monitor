@@ -14,9 +14,8 @@ export async function updateDatabase(db) {
     
     const historyCols = await addHistoryColumns(db);
     results.push({ name: 'metrics_history 表列更新', ...historyCols });
-    
-    const cleanupHistory = await cleanupMetricsHistoryColumns(db);
-    results.push({ name: 'metrics_history 表多余字段清理', ...cleanupHistory });
+
+    // 无需清理metrics_history多余字段，消耗过大，不影响使用，每月执行monthlyCleanup的时候会自动清理
 
     const historyRowid = await optimizeMetricsHistoryRowid(db);
     results.push({ name: 'metrics_history 写入优化', ...historyRowid });
@@ -128,7 +127,7 @@ async function cleanupServerExtraColumns(db) {
   }
 }
 
-async function addHistoryColumns(db) {
+export async function addHistoryColumns(db) {
   try {
     const { results: historyColumns } = await db.prepare(`PRAGMA table_info(metrics_history)`).all();
     const existingHistoryCols = historyColumns.map(c => c.name);
@@ -300,30 +299,6 @@ async function dropMetricsAggregatedTable(db) {
     return { success: true, dropped: 1, message: '已删除 metrics_aggregated 表' };
   } catch (e) {
     console.error('删除 metrics_aggregated 表失败:', e);
-    return { success: false, error: e.message };
-  }
-}
-
-async function cleanupMetricsHistoryColumns(db) {
-  try {
-    const { results: columns } = await db.prepare(`PRAGMA table_info(metrics_history)`).all();
-    const existingCols = columns.map(c => c.name);
-    
-    const extraCols = ['country', 'ram', 'disk'];
-    const colsToDrop = extraCols.filter(col => existingCols.includes(col));
-    
-    if (colsToDrop.length === 0) {
-      return { success: true, cleaned: 0, message: '无需清理（没有多余字段）' };
-    }
-    
-    for (const col of colsToDrop) {
-      await db.prepare(`ALTER TABLE metrics_history DROP COLUMN ${col}`).run();
-      console.log(`✅ 已删除 metrics_history 表的 ${col} 字段`);
-    }
-    
-    return { success: true, cleaned: colsToDrop.length, message: `已删除 ${colsToDrop.join(', ')} 字段` };
-  } catch (e) {
-    console.error('清理 metrics_history 表多余字段失败:', e);
     return { success: false, error: e.message };
   }
 }
