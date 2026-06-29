@@ -300,7 +300,7 @@ const { columns, rows } = await res.json();
 **Request**
 
 ```
-GET /api/ws?subscribe=<all|serverId>&ids=<id1,id2,...>
+GET /api/ws?subscribe=<all|serverId>
 Headers: Upgrade: websocket, Connection: Upgrade
 ```
 
@@ -309,23 +309,26 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | 参数 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `subscribe` | 否 | `all` | `all` 订阅所有服务器，`<serverId>` 只订阅指定服务器 |
-| `ids` | **是**（`subscribe=all` 时） | （空） | 逗号分隔的服务器 ID 列表，仅 `subscribe=all` 时生效。传入后只接收列表中服务器的更新。未传入时不返回任何更新 |
 
 **过滤机制**：
 
-- `subscribe=all` + 传入 `ids`：仅接收 ID 在列表中的服务器更新
-- `subscribe=all` + 未传 `ids`：**不返回任何更新**
-- `subscribe=<serverId>`：始终只接收该服务器更新，`ids` 参数无效
+- `subscribe=all` + 通道内发送 `subscribe` 消息：仅接收 `ids` 列表中的服务器更新
+- `subscribe=all` + 未发送 `subscribe` 消息：**不返回任何更新**
+- `subscribe=<serverId>`：始终只接收该服务器更新，不需要发送 `ids`
+- `ids` 最多 500 个，每个 ID 长度 1-64，仅允许字母、数字、`.`、`_`、`:`、`-`
+- `scope` 或 `ids` 格式非法时服务端会关闭 WebSocket 连接（close code `1008`）
+- `ids` 是客户端订阅过滤，不是服务端鉴权
 
 **多 apiBase 注意事项**：
 
-当配置了多个 `apiBase` 时，前端会为每个 apiBase 创建独立的 WebSocket 连接。每个连接的 `ids` 参数应只包含该 apiBase 返回的服务器 ID，而非全部服务器 ID。每个 Worker/DO 只知道自己的服务器，传入不属于它的 ID 不会产生任何效果。
+当配置了多个 `apiBase` 时，前端会为每个 apiBase 创建独立的 WebSocket 连接。每个连接发送的 `ids` 应只包含该 apiBase 返回的服务器 ID，而非全部服务器 ID。每个 Worker/DO 只知道自己的服务器，传入不属于它的 ID 不会产生任何效果。
 
 **推荐流程**：
 
 1. 调用 `GET /api/servers` 获取服务器列表（已按登录状态过滤隐藏服务器）
 2. 提取返回的 `servers[].id` 数组
-3. 连接 WebSocket 时将 ID 列表传入 `ids` 参数：`?subscribe=all&ids=id1,id2,id3`
+3. 连接 WebSocket：`?subscribe=all`
+4. 建连后通过 WebSocket 通道发送 `{ type: "subscribe", scope: "all", ids }`
 
 **推送策略**：
 
@@ -339,6 +342,8 @@ Headers: Upgrade: websocket, Connection: Upgrade
 | 类型 | 方向 | 数据结构 |
 | --- | --- | --- |
 | `hello` | S → C | `{ type: "hello", ts: number, subscribed: string }` |
+| `subscribe` | C → S | `{ type: "subscribe", scope: string, ids: string[] }` |
+| `subscribed` | S → C | `{ type: "subscribed", ts: number, subscribed: string, count: number }` |
 | `ping` | C → S | `{ type: "ping", ts: number }` |
 | `pong` | 双向 | `{ type: "pong", ts: number }` |
 | `update` | S → C | `{ type: "update", serverId: string, ts: number, data: Server }` |
@@ -351,10 +356,11 @@ Headers: Upgrade: websocket, Connection: Upgrade
 const { servers } = await (await fetch('/api/servers')).json();
 const ids = servers.map(s => s.id);
 
-// 2. 连接 WebSocket，只接收这些服务器的更新
-const ws = new WebSocket(
-  `wss://status.example.com/api/ws?subscribe=all&ids=${encodeURIComponent(ids.join(','))}`
-);
+// 2. 连接 WebSocket，并通过通道消息提交订阅 ID 列表
+const ws = new WebSocket('wss://status.example.com/api/ws?subscribe=all');
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: 'subscribe', scope: 'all', ids }));
+};
 ws.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   if (msg.type === 'batchUpdate') {
@@ -506,12 +512,14 @@ interface Settings {
 }
 
 interface WsMessage {
-  type: 'hello' | 'ping' | 'pong' | 'update' | 'batchUpdate';
+  type: 'hello' | 'subscribe' | 'subscribed' | 'ping' | 'pong' | 'update' | 'batchUpdate';
   ts?: number;
   subscribed?: string;
+  scope?: string;
+  ids?: string[];
+  count?: number;
   serverId?: string;
   data?: Server;
   updates?: Array<{ serverId: string; ts: number; data: Server }>;
 }
 ```
-

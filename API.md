@@ -578,6 +578,8 @@ Sec-WebSocket-Version: 13
 | `subscribe=all` | 批量合并，每 5 秒一次 | `batchUpdate` | 减少消息数量，降低前端渲染压力 |
 | `subscribe=<serverId>` | 实时推送 | `update` | 单台服务器详情页，低延迟 |
 
+> `subscribe=all` 默认不推送任何服务器更新。客户端应先调用 `/api/servers` 获取当前可见服务器列表，再通过 WebSocket 通道发送 `subscribe` 消息，使用 `servers[].id` 作为过滤列表。该过滤是客户端订阅范围控制，不是服务端鉴权。
+
 **服务端 → 客户端消息**：
 
 1. 连接成功（Hello）
@@ -628,8 +630,22 @@ Sec-WebSocket-Version: 13
 **客户端 → 服务端消息**（可选）：
 
 ```json
+{ "type": "subscribe", "scope": "all", "ids": ["server-001", "server-002"] }
 { "type": "ping" }   // → 服务端回 { "type": "pong", "ts": ... }
 { "type": "pong" }   // 静默忽略
+```
+
+`subscribe` 消息用于更新当前 WebSocket 的订阅范围：
+
+- `scope`：可选，默认沿用 URL 中的 `subscribe`，通常为 `all`
+- `ids`：可选数组，来自 `/api/servers` 返回的 `servers[].id`；`subscribe=all` 时仅推送这些 ID 的更新。最多 500 个，每个 ID 长度 1-64，仅允许字母、数字、`.`、`_`、`:`、`-`
+
+若 `scope` 或 `ids` 格式非法，服务端会关闭 WebSocket 连接（close code `1008`）。
+
+服务端确认消息：
+
+```json
+{ "type": "subscribed", "ts": 1737638400000, "subscribed": "all", "count": 2 }
 ```
 
 **失败返回**：
@@ -640,7 +656,12 @@ Sec-WebSocket-Version: 13
 **前端使用示例（subscribe=all，批量推送）**：
 
 ```js
+const { servers } = await (await fetch('/api/servers')).json();
+const ids = servers.map(s => s.id);
 const ws = new WebSocket('wss://status.example.com/api/ws?subscribe=all');
+ws.onopen = () => {
+  ws.send(JSON.stringify({ type: 'subscribe', scope: 'all', ids }));
+};
 ws.onmessage = (ev) => {
   const msg = JSON.parse(ev.data);
   if (msg.type === 'batchUpdate') {
@@ -1201,6 +1222,8 @@ Header：`X-Turnstile-Token: <token>`（当 `site_options.turnstile_enabled === 
 | `type`   | 方向    | Payload                                            |
 | -------- | ----- | -------------------------------------------------- |
 | `hello`  | S → C | `{ ts: number, subscribed: string }`               |
+| `subscribe` | C → S | `{ scope: string, ids: string[] }`              |
+| `subscribed` | S → C | `{ ts: number, subscribed: string, count: number }` |
 | `ping`   | S → C | `{ ts: number }`                                   |
 | `pong`   | 双向    | `{ ts: number }`                                   |
 | `update` | S → C | `{ serverId: string, ts: number, data: <Server> }` |
@@ -1385,6 +1408,7 @@ curl https://status.example.com/__do/health
 ```bash
 # 订阅所有服务器
 wscat -c "wss://status.example.com/api/ws?subscribe=all"
+# 建连后发送：{"type":"subscribe","scope":"all","ids":["server-id"]}
 
 # 订阅指定服务器
 wscat -c "wss://status.example.com/api/ws?subscribe=9b2c4d3e-1a2b-4c5d-9e8f-7a6b5c4d3e2f"

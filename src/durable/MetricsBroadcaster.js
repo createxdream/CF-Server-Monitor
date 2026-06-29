@@ -11,6 +11,11 @@
 // - 使用 DO WebSocket Hibernation API，闲置时休眠以节省资源。
 //   通过 setWebSocketAutoResponse 自动响应 ping，无需唤醒 DO。
 
+const MAX_SUBSCRIBE_IDS = 500;
+const MAX_SERVER_ID_LENGTH = 64;
+const SERVER_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
+const WS_POLICY_VIOLATION = 1008;
+
 function parseAllowedOrigins(corsAllowedOrigins) {
   if (!corsAllowedOrigins || corsAllowedOrigins.trim() === '') {
     return [];
@@ -35,6 +40,57 @@ export class MetricsBroadcaster {
         JSON.stringify({ type: 'pong' })
       )
     );
+  }
+
+  _isValidServerId(id) {
+    return (
+      typeof id === 'string' &&
+      id.length > 0 &&
+      id.length <= MAX_SERVER_ID_LENGTH &&
+      SERVER_ID_PATTERN.test(id)
+    );
+  }
+
+  _isValidScope(scope) {
+    return scope === 'all' || this._isValidServerId(scope);
+  }
+
+  _normalizeServerIds(ids) {
+    if (ids === undefined) return { ok: true, ids: [] };
+    if (!Array.isArray(ids) || ids.length > MAX_SUBSCRIBE_IDS) {
+      return { ok: false, ids: [] };
+    }
+
+    const seen = new Set();
+    const normalized = [];
+    for (const id of ids) {
+      if (typeof id !== 'string') {
+        return { ok: false, ids: [] };
+      }
+
+      const value = id.trim();
+      if (!this._isValidServerId(value)) {
+        return { ok: false, ids: [] };
+      }
+
+      if (seen.has(value)) continue;
+      seen.add(value);
+      normalized.push(value);
+    }
+    return { ok: true, ids: normalized };
+  }
+
+  _closeInvalidSubscription(ws) {
+    try {
+      ws.close(WS_POLICY_VIOLATION, 'invalid subscription');
+    } catch (_) {}
+  }
+
+  _getSubscribeScope(msg, current) {
+    if (!Object.prototype.hasOwnProperty.call(msg, 'scope') || msg.scope === undefined) {
+      return current.scope || 'all';
+    }
+    return typeof msg.scope === 'string' ? msg.scope : null;
   }
 
   // 根据 scope 和 serverIds 判断是否需要接收某台服务器的更新
@@ -70,12 +126,9 @@ export class MetricsBroadcaster {
 
       const raw = url.searchParams.get('subscribe') || 'all';
       const scope = raw.trim().toLowerCase();
-
-      // 解析客户端传入的 server IDs 用于过滤
-      const idsParam = url.searchParams.get('ids') || '';
-      const serverIds = idsParam
-        ? idsParam.split(',').map(id => id.trim()).filter(id => id.length > 0)
-        : [];
+      if (!this._isValidScope(scope)) {
+        return new Response('Invalid subscription scope', { status: 400 });
+      }
 
       // @ts-ignore - Cloudflare Workers 运行时提供 WebSocketPair
       const pair = new WebSocketPair();
@@ -84,8 +137,8 @@ export class MetricsBroadcaster {
       // 使用 DO WebSocket Hibernation API 接管连接
       this.state.acceptWebSocket(server);
 
-      // 将订阅 scope 和 serverIds 附加到 WebSocket（休眠后仍保留）
-      server.serializeAttachment({ scope, serverIds });
+      // 将订阅 scope 和空 serverIds 附加到 WebSocket（休眠后仍保留）
+      server.serializeAttachment({ scope, serverIds: [] });
 
       // 立即发送 hello 让客户端确认连接成功
       try {
@@ -274,6 +327,38 @@ export class MetricsBroadcaster {
     // 保留处理扩展消息的入口
     try {
       const msg = JSON.parse(message || '{}');
+      if (msg && msg.type === 'subscribe') {
+        const current = ws.deserializeAttachment() || {};
+        const rawScope = this._getSubscribeScope(msg, current);
+        if (rawScope === null) {
+          this._closeInvalidSubscription(ws);
+          return;
+        }
+
+        const scope = rawScope.trim().toLowerCase();
+        if (!this._isValidScope(scope)) {
+          this._closeInvalidSubscription(ws);
+          return;
+        }
+
+        const normalizedServerIds = this._normalizeServerIds(msg.ids);
+        if (!normalizedServerIds.ok) {
+          this._closeInvalidSubscription(ws);
+          return;
+        }
+
+        const serverIds = normalizedServerIds.ids;
+        ws.serializeAttachment({ scope, serverIds });
+        try {
+          ws.send(JSON.stringify({
+            type: 'subscribed',
+            ts: Date.now(),
+            subscribed: scope,
+            count: serverIds.length
+          }));
+        } catch (_) {}
+        return;
+      }
       if (msg && msg.type === 'pong') return;
     } catch (_) {}
   }
