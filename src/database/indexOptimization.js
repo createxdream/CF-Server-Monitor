@@ -13,9 +13,12 @@ export async function ensureServerOptimization(db) {
     return;
   }
 
-  // 新建history_partition_id字段
+  // 新建history_partition_id timestamp字段
   await db.prepare(
     `ALTER TABLE servers ADD COLUMN history_partition_id INTEGER DEFAULT 0`
+  ).run();
+  await db.prepare(
+    `ALTER TABLE servers ADD COLUMN timestamp INTEGER DEFAULT 0`
   ).run();
 
   const { results: columns = [] } = await db.prepare(`PRAGMA table_info(servers)`).all();

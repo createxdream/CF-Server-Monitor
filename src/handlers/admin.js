@@ -405,9 +405,9 @@ export async function handleAdminAPI(request, env, sys) {
 
       await env.DB.prepare(`
         INSERT INTO servers
-        (id, name, server_group, sort_order, history_partition_id)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(id, name, group, sortOrder, historyPartitionId).run();
+        (id, name, server_group, sort_order, history_partition_id, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(id, name, group, sortOrder, historyPartitionId, Date.now()).run();
       
       clearServersListCache();
       
