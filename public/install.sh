@@ -732,8 +732,6 @@ write_probe_result() {
     else
         "$@" > "$tmp" 2>/dev/null || true
     fi
-    local _content
-    _content=$(cat "$tmp" 2>/dev/null)
     if [ -s "$tmp" ]; then
         mv "$tmp" "$dest"
     else

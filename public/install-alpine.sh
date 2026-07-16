@@ -286,8 +286,8 @@ persist_dynamic_config() {
 
 apply_remote_config() {
     local response_file="$1" header_file="$2" body bytes new_md5
-    _cf_new_collect new_report new_reset new_schema new_ct new_cu new_cm new_bd
-    _cf_new_rx_corr new_tx_corr
+    local new_collect new_report new_reset new_schema new_ct new_cu new_cm new_bd
+    local new_rx_corr new_tx_corr
     bytes=$(wc -c < "$response_file" 2>/dev/null || echo 9999)
     [ "$bytes" -le 1024 ] || return 1
     body=$(cat "$response_file" 2>/dev/null) || return 1
@@ -370,7 +370,7 @@ is_valid_correction_value() {
 }
 
 send_correction_confirm() {
-    _cf_rx_val tx_val payload http_code
+    local rx_val tx_val payload http_code
     rx_val=$(normalize_correction_value "$1")
     tx_val=$(normalize_correction_value "$2")
     is_valid_correction_value "$rx_val" && is_valid_correction_value "$tx_val" || return 1
@@ -388,39 +388,40 @@ send_correction_confirm() {
 }
 
 apply_traffic_correction() {
-    _cf_tc_rx_val="${1:-0}"
-    _cf_tc_tx_val="${2:-0}"
-    [ -z "$_cf_tc_rx_val" ] && _cf_tc_rx_val=0
-    [ -z "$_cf_tc_tx_val" ] && _cf_tc_tx_val=0
-    is_valid_correction_value "$_cf_tc_rx_val" && is_valid_correction_value "$_cf_tc_tx_val" || return 1
-    _cf_tc_rx_bytes=0; _cf_tc_tx_bytes=0
-    _cf_tc_rx_bytes=$(printf '%s' "$_cf_tc_rx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
-    _cf_tc_tx_bytes=$(printf '%s' "$_cf_tc_tx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
-    _cf_tc_saved_rx_prev=0; _cf_tc_saved_tx_prev=0; _cf_tc_saved_rx_period=0; _cf_tc_saved_tx_period=0; _cf_tc_saved_last_check=0; _cf_tc_saved_period_start=0
+    local rx_val="${1:-0}"
+    local tx_val="${2:-0}"
+    [ -z "$rx_val" ] && rx_val=0
+    [ -z "$tx_val" ] && tx_val=0
+    is_valid_correction_value "$rx_val" && is_valid_correction_value "$tx_val" || return 1
+    local rx_bytes=0 tx_bytes=0
+    rx_bytes=$(printf '%s' "$rx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
+    tx_bytes=$(printf '%s' "$tx_val" | awk '{printf "%.0f", $1 * 1024 * 1024 * 1024}')
+    local saved_rx_prev=0 saved_tx_prev=0 saved_rx_period=0 saved_tx_period=0 saved_last_check=0 saved_period_start=0
     if [ -f "${TRAFFIC_DATA_FILE}" ]; then
         while IFS='=' read -r key value; do
             case "$key" in
-                RX_PREV) _cf_tc_saved_rx_prev="${value%%\"*}"; _cf_tc_saved_rx_prev="${_cf_tc_saved_rx_prev#\"}" ;;
-                TX_PREV) _cf_tc_saved_tx_prev="${value%%\"*}"; _cf_tc_saved_tx_prev="${_cf_tc_saved_tx_prev#\"}" ;;
-                RX_PERIOD) _cf_tc_saved_rx_period="${value%%\"*}"; _cf_tc_saved_rx_period="${_cf_tc_saved_rx_period#\"}" ;;
-                TX_PERIOD) _cf_tc_saved_tx_period="${value%%\"*}"; _cf_tc_saved_tx_period="${_cf_tc_saved_tx_period#\"}" ;;
-                LAST_CHECK) _cf_tc_saved_last_check="${value%%\"*}"; _cf_tc_saved_last_check="${_cf_tc_saved_last_check#\"}" ;;
-                PERIOD_START) _cf_tc_saved_period_start="${value%%\"*}"; _cf_tc_saved_period_start="${_cf_tc_saved_period_start#\"}" ;;
+                RX_PREV) saved_rx_prev="${value%%\"*}"; saved_rx_prev="${saved_rx_prev#\"}" ;;
+                TX_PREV) saved_tx_prev="${value%%\"*}"; saved_tx_prev="${saved_tx_prev#\"}" ;;
+                RX_PERIOD) saved_rx_period="${value%%\"*}"; saved_rx_period="${saved_rx_period#\"}" ;;
+                TX_PERIOD) saved_tx_period="${value%%\"*}"; saved_tx_period="${saved_tx_period#\"}" ;;
+                LAST_CHECK) saved_last_check="${value%%\"*}"; saved_last_check="${saved_last_check#\"}" ;;
+                PERIOD_START) saved_period_start="${value%%\"*}"; saved_period_start="${saved_period_start#\"}" ;;
             esac
         done < "${TRAFFIC_DATA_FILE}"
     fi
-    _cf_tc_now_ts=$(date +%s)
-    _cf_tc_saved_rx_period=${_cf_tc_rx_bytes}
-    _cf_tc_saved_tx_period=${_cf_tc_tx_bytes}
-    log_info "Traffic correction applied: RX=${_cf_tc_rx_val}GB (${_cf_tc_rx_bytes} bytes) TX=${_cf_tc_tx_val}GB (${_cf_tc_tx_bytes} bytes)"
+    local now_ts
+    now_ts=$(date +%s)
+    saved_rx_period=${rx_bytes}
+    saved_tx_period=${tx_bytes}
+    log_info "Traffic correction applied: RX=${rx_val}GB (${rx_bytes} bytes) TX=${tx_val}GB (${tx_bytes} bytes)"
     mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
     cat > "${TRAFFIC_DATA_FILE}.tmp" << EOF
-RX_PREV=${_cf_tc_saved_rx_prev}
-TX_PREV=${_cf_tc_saved_tx_prev}
-RX_PERIOD=${_cf_tc_saved_rx_period}
-TX_PERIOD=${_cf_tc_saved_tx_period}
-LAST_CHECK=${_cf_tc_now_ts}
-PERIOD_START=${_cf_tc_saved_period_start}
+RX_PREV=${saved_rx_prev}
+TX_PREV=${saved_tx_prev}
+RX_PERIOD=${saved_rx_period}
+TX_PERIOD=${saved_tx_period}
+LAST_CHECK=${now_ts}
+PERIOD_START=${saved_period_start}
 EOF
     mv "${TRAFFIC_DATA_FILE}.tmp" "${TRAFFIC_DATA_FILE}" 2>/dev/null || true
 }
@@ -456,7 +457,7 @@ get_period_start_ts() {
     local reset_day="$1"
     [ "$reset_day" -eq 0 ] 2>/dev/null && { echo "0"; return; }
     local now_ts="$2"
-    _cf_year month day
+    local year month day
     # 用 awk 将 epoch 秒转换为 year month day（UTC），避免 BusyBox date -d 不可用
     local _date_parts
     _date_parts=$(awk 'BEGIN{
@@ -528,7 +529,7 @@ calc_monthly_traffic() {
     
     local saved_rx_prev=0 saved_tx_prev=0 saved_rx_period=0 saved_tx_period=0 saved_last_check=0 saved_period_start=0
     if [ -f "${TRAFFIC_DATA_FILE}" ]; then
-        _cf_tmp_rx_prev tmp_tx_prev tmp_rx_period tmp_tx_period tmp_last_check tmp_period_start
+        local tmp_rx_prev tmp_tx_prev tmp_rx_period tmp_tx_period tmp_last_check tmp_period_start
         while IFS='=' read -r key value; do
             case "$key" in
                 RX_PREV) tmp_rx_prev="$value" ;;
@@ -653,7 +654,7 @@ has_nc_zero_io() {
 get_tcp_ping_nc() {
     local host="${1:-}"
     local port="${2:-443}"
-    _cf_start end ms
+    local start end ms
 
     start=$(get_time_ms) || return 1
     if nc -z -w 2 "${host}" "${port}" >/dev/null 2>&1; then
@@ -696,7 +697,7 @@ get_probe() {
 
     local icmp_out
     icmp_out=$(ping -c "$count" -W 2 "$host" 2>/dev/null)
-    _cf_avg_rtt loss
+    local avg_rtt loss
     avg_rtt=$(echo "$icmp_out" | awk -F'[/ ]' '/^rtt/{print $8}' | cut -d. -f1)
     loss=$(echo "$icmp_out" | awk '/packet loss/{for(i=1;i<=NF;i++) if($i~/[0-9]+%/){gsub(/%/,"",$i);printf "%d",$i;exit}}')
     [ -z "$avg_rtt" ] && avg_rtt="null"
